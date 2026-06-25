@@ -64,6 +64,7 @@ export default function App(){
   const[demoMode,setDemoMode]=useState(false);
   const[language,setLanguage]=useState("English");
   const[result,setResult]=useState(SAMPLE);
+  const[pages,setPages]=useState([]);
   const[title,setTitle]=useState("Your uploaded chapter");
   const[note,setNote]=useState("");
   const[err,setErr]=useState("");
@@ -72,10 +73,11 @@ export default function App(){
   async function handleFile(file){
     if(!file)return;
     setErr("");setTitle(file.name.replace(/\.pdf$/i,""));setStage("processing");
-    if(demoMode){setTimeout(()=>{setResult(SAMPLE);setNote("sample");setStage("workspace");setTab("pager");},2400);return;}
+    if(demoMode){setTimeout(()=>{setResult(SAMPLE);setPages([]);setNote("sample");setStage("workspace");setTab("pager");},2400);return;}
     try{
-      const{pages,total}=await extractPdf(file);
-      const resp=await fetch("/api/generate",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({pages,title:file.name,language})});
+      const{pages:extracted,total}=await extractPdf(file);
+      setPages(extracted);
+      const resp=await fetch("/api/generate",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({pages:extracted,title:file.name,language})});
       const json=await resp.json();
       if(json.ok&&json.data&&Array.isArray(json.data.pager)){
         setResult({...json.data,book:json.book||file.name});setNote(json.truncated?"truncated":"live");
@@ -94,12 +96,13 @@ export default function App(){
         @keyframes pulse{0%,100%{opacity:.35}50%{opacity:1}}
         @keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
         @keyframes scan{0%{transform:translateY(0)}100%{transform:translateY(220px)}}
+        @keyframes spin{to{transform:rotate(360deg)}}
       `}</style>
       <Header demoMode={demoMode} setDemoMode={setDemoMode} language={language} setLanguage={setLanguage} stage={stage}/>
       <div style={{maxWidth:1080,margin:"0 auto",padding:"0 24px 80px"}}>
         {stage==="upload"&&<Upload fileRef={fileRef} onFile={handleFile} demoMode={demoMode} language={language}/>}
         {stage==="processing"&&<Processing/>}
-        {stage==="workspace"&&<Workspace result={result} tab={tab} setTab={setTab} title={title} note={note} err={err} onReset={()=>setStage("upload")}/>}
+        {stage==="workspace"&&<Workspace result={result} pages={pages} tab={tab} setTab={setTab} title={title} note={note} err={err} onReset={()=>setStage("upload")} language={language}/>}
       </div>
     </div>
   );
@@ -197,7 +200,7 @@ function Cite({page,quote,status,book}){
   );
 }
 
-function Workspace({result,tab,setTab,title,note,err,onReset}){
+function Workspace({result,pages,tab,setTab,title,note,err,onReset,language}){
   const tabs=[["pager","Pager"],["ask","Ask the book"],["quiz","Quiz"],["revise","Revision"]];
   const book=result.book||title;
   return(
@@ -215,8 +218,8 @@ function Workspace({result,tab,setTab,title,note,err,onReset}){
         {tabs.map(([k,l])=><button key={k} className="b" onClick={()=>setTab(k)} style={{background:"transparent",border:"none",cursor:"pointer",padding:"10px 16px",fontSize:14,fontWeight:tab===k?600:500,color:tab===k?INK:MUTED,borderBottom:tab===k?`2px solid ${HEAL}`:"2px solid transparent",marginBottom:-1}}>{l}</button>)}
       </div>
       {tab==="pager"&&<Pager result={result} book={book}/>}
-      {tab==="ask"&&<Ask result={result} book={book}/>}
-      {tab==="quiz"&&<Quiz result={result} book={book}/>}
+      {tab==="ask"&&<Ask result={result} book={book} pages={pages} language={language}/>}
+      {tab==="quiz"&&<Quiz result={result} book={book} pages={pages} language={language}/>}
       {tab==="revise"&&<Revise result={result}/>}
     </section>
   );
@@ -249,60 +252,196 @@ function Pager({result,book}){
   );
 }
 
-function Ask({result,book}){
-  const[active,setActive]=useState(null),[custom,setCustom]=useState("");
-  const cur=active!=null?result.qa[active]:null;
-  const{out,done}=useTypewriter(cur?cur.a:"",cur!=null);
+function Ask({result,book,pages,language}){
+  const[active,setActive]=useState(null);
+  const[custom,setCustom]=useState("");
+  const[customAnswer,setCustomAnswer]=useState(null);
+  const[loading,setLoading]=useState(false);
+  const[askErr,setAskErr]=useState("");
+
+  // preset Q&A selection
+  const presetCur=active!=null&&customAnswer==null?result.qa[active]:null;
+  const{out,done}=useTypewriter(presetCur?presetCur.a:"",presetCur!=null);
+
+  // typewriter for custom answer
+  const{out:customOut,done:customDone}=useTypewriter(customAnswer?customAnswer.answer:"",customAnswer!=null&&!loading);
+
+  async function handleAsk(){
+    const q=custom.trim();
+    if(!q)return;
+    setActive(null);
+    setCustomAnswer(null);
+    setAskErr("");
+    setLoading(true);
+    try{
+      const resp=await fetch("/api/ask",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({question:q,pages,book,language})});
+      const json=await resp.json();
+      if(json.ok){
+        setCustomAnswer({question:q,...json});
+      }else{
+        setAskErr(json.error||"Something went wrong. Try again.");
+      }
+    }catch(e){
+      setAskErr(String(e));
+    }
+    setLoading(false);
+  }
+
+  function handleKeyDown(e){if(e.key==="Enter")handleAsk();}
+
+  function selectPreset(i){
+    setActive(i);
+    setCustomAnswer(null);
+    setAskErr("");
+    setCustom("");
+  }
+
+  const showCustom=customAnswer!=null||loading||askErr;
+
   return(
     <div style={{animation:"rise .4s ease both"}}>
       <div style={{display:"flex",gap:10,marginBottom:18,flexWrap:"wrap"}}>
-        {result.qa.map((qa,i)=><button key={i} className="b" onClick={()=>setActive(i)} style={{textAlign:"left",flex:"1 1 240px",background:active===i?HEAL:"#fff",color:active===i?"#fff":INK,border:`1px solid ${active===i?HEAL:LINE}`,borderRadius:10,padding:"12px 14px",fontSize:13.5,cursor:"pointer",lineHeight:1.4}}>{qa.q}</button>)}
+        {result.qa.map((qa,i)=><button key={i} className="b" onClick={()=>selectPreset(i)} style={{textAlign:"left",flex:"1 1 240px",background:active===i&&!showCustom?HEAL:"#fff",color:active===i&&!showCustom?"#fff":INK,border:`1px solid ${active===i&&!showCustom?HEAL:LINE}`,borderRadius:10,padding:"12px 14px",fontSize:13.5,cursor:"pointer",lineHeight:1.4}}>{qa.q}</button>)}
       </div>
       <div style={{display:"flex",gap:8,marginBottom:22}}>
-        <input value={custom} onChange={e=>setCustom(e.target.value)} placeholder="…or type your own doubt about the chapter" style={{flex:1,border:`1px solid ${LINE}`,borderRadius:10,padding:"12px 14px",fontSize:14,fontFamily:"inherit",background:"#fff",color:INK}}/>
-        <button className="b" onClick={()=>setActive(0)} style={{background:INK,color:PAPER,border:"none",borderRadius:10,padding:"0 18px",fontSize:14,fontWeight:600,cursor:"pointer"}}>Ask</button>
+        <input
+          value={custom}
+          onChange={e=>setCustom(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Type your own question about the chapter…"
+          style={{flex:1,border:`1px solid ${LINE}`,borderRadius:10,padding:"12px 14px",fontSize:14,fontFamily:"inherit",background:"#fff",color:INK}}
+        />
+        <button className="b" onClick={handleAsk} disabled={loading||!custom.trim()} style={{background:loading||!custom.trim()?MUTED:INK,color:PAPER,border:"none",borderRadius:10,padding:"0 18px",fontSize:14,fontWeight:600,cursor:loading||!custom.trim()?"not-allowed":"pointer",transition:"background .2s",minWidth:64}}>
+          {loading?"…":"Ask"}
+        </button>
       </div>
-      {cur?(
-        <div style={{background:"#fff",border:`1px solid ${LINE}`,borderRadius:14,padding:"22px 26px",animation:"rise .3s ease both"}}>
-          <div style={{fontFamily:"'Fraunces',serif",fontSize:17,marginBottom:12,color:ACCENT}}>{cur.q}</div>
-          <p style={{margin:0,fontSize:14.5,lineHeight:1.65,color:"#28342f"}}>{out}{!done&&<span style={{borderLeft:`2px solid ${HEAL}`,marginLeft:2,animation:"pulse .8s infinite"}}/>}</p>
-          {done&&<Cite page={cur.citation_page} quote={cur.citation_quote} status={cur.citation_status} book={book}/>}
+
+      {loading&&(
+        <div style={{display:"flex",alignItems:"center",gap:10,color:MUTED,fontSize:14,padding:"20px 0"}}>
+          <span style={{width:16,height:16,borderRadius:"50%",border:`2px solid ${HEAL}`,borderTopColor:"transparent",display:"inline-block",animation:"spin .7s linear infinite"}}/>
+          Searching the chapter…
         </div>
-      ):<div style={{textAlign:"center",color:MUTED,fontSize:14,padding:"40px 0"}}>Pick a question above to see a model answer drawn from your chapter.</div>}
-      <div style={{marginTop:14,fontSize:12,color:MUTED}}>Note: in this build the typed box routes to the prepared answers. Live free-text Q&A is a Phase 2 item (see spec).</div>
+      )}
+
+      {askErr&&<div style={{color:ACCENT,fontSize:13.5,background:"#f9e7e1",border:`1px solid ${ACCENT}`,borderRadius:10,padding:"12px 16px",marginBottom:14}}>{askErr}</div>}
+
+      {showCustom&&customAnswer&&!loading&&(
+        <div style={{background:"#fff",border:`1px solid ${LINE}`,borderRadius:14,padding:"22px 26px",animation:"rise .3s ease both"}}>
+          <div style={{fontFamily:"'Fraunces',serif",fontSize:17,marginBottom:12,color:ACCENT}}>{customAnswer.question}</div>
+          <p style={{margin:0,fontSize:14.5,lineHeight:1.65,color:"#28342f"}}>{customOut}{!customDone&&<span style={{borderLeft:`2px solid ${HEAL}`,marginLeft:2,animation:"pulse .8s infinite"}}/>}</p>
+          {customDone&&<Cite page={customAnswer.citation_page} quote={customAnswer.citation_quote} status={customAnswer.citation_status} book={book}/>}
+        </div>
+      )}
+
+      {!showCustom&&presetCur&&(
+        <div style={{background:"#fff",border:`1px solid ${LINE}`,borderRadius:14,padding:"22px 26px",animation:"rise .3s ease both"}}>
+          <div style={{fontFamily:"'Fraunces',serif",fontSize:17,marginBottom:12,color:ACCENT}}>{presetCur.q}</div>
+          <p style={{margin:0,fontSize:14.5,lineHeight:1.65,color:"#28342f"}}>{out}{!done&&<span style={{borderLeft:`2px solid ${HEAL}`,marginLeft:2,animation:"pulse .8s infinite"}}/>}</p>
+          {done&&<Cite page={presetCur.citation_page} quote={presetCur.citation_quote} status={presetCur.citation_status} book={book}/>}
+        </div>
+      )}
+
+      {!showCustom&&!presetCur&&(
+        <div style={{textAlign:"center",color:MUTED,fontSize:14,padding:"40px 0"}}>Pick a preset question above or type your own to get a cited answer from the chapter.</div>
+      )}
     </div>
   );
 }
 
-function Quiz({result,book}){
-  const[idx,setIdx]=useState(0),[chosen,setChosen]=useState(null),[score,setScore]=useState(0),[fin,setFin]=useState(false);
-  const q=result.quiz[idx];
+function shuffleArray(arr){
+  const a=[...arr];
+  for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}
+  return a;
+}
+
+function prepareQuiz(questions){
+  return shuffleArray(questions).map(q=>{
+    const n=q.options.length;
+    const indices=shuffleArray([...Array(n).keys()]);
+    return{...q,options:indices.map(i=>q.options[i]),correct:indices.indexOf(q.correct)};
+  });
+}
+
+function Quiz({result,book,pages,language}){
+  const[quiz,setQuiz]=useState(()=>prepareQuiz(result.quiz));
+  const[seenStems,setSeenStems]=useState(()=>result.quiz.map(q=>q.q));
+  const[idx,setIdx]=useState(0);
+  const[chosen,setChosen]=useState(null);
+  const[score,setScore]=useState(0);
+  const[fin,setFin]=useState(false);
+  const[generating,setGenerating]=useState(false);
+  const[genErr,setGenErr]=useState("");
+
+  const q=quiz[idx];
+
   function pick(i){if(chosen!=null)return;setChosen(i);if(i===q.correct)setScore(s=>s+1);}
-  function next(){if(idx+1>=result.quiz.length){setFin(true);return;}setIdx(idx+1);setChosen(null);}
-  function restart(){setIdx(0);setChosen(null);setScore(0);setFin(false);}
+  function next(){if(idx+1>=quiz.length){setFin(true);return;}setIdx(idx+1);setChosen(null);}
+
+  function retake(){
+    setQuiz(prepareQuiz(quiz));
+    setIdx(0);setChosen(null);setScore(0);setFin(false);
+  }
+
+  async function generateNew(){
+    setGenerating(true);setGenErr("");
+    try{
+      const resp=await fetch("/api/quiz",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({pages,book,language,exclude:seenStems})});
+      const json=await resp.json();
+      if(json.ok&&Array.isArray(json.quiz)&&json.quiz.length>0){
+        const prepared=prepareQuiz(json.quiz);
+        setQuiz(prepared);
+        setSeenStems(s=>[...s,...json.quiz.map(q=>q.q)]);
+        setIdx(0);setChosen(null);setScore(0);setFin(false);
+      }else{
+        setGenErr(json.error||"Could not generate questions. Try again.");
+      }
+    }catch(e){setGenErr(String(e));}
+    setGenerating(false);
+  }
+
   if(fin)return(
     <div style={{textAlign:"center",padding:"50px 0",animation:"rise .4s ease both"}}>
-      <div style={{fontFamily:"'Fraunces',serif",fontSize:40,color:HEAL}}>{score}/{result.quiz.length}</div>
-      <div style={{fontSize:15,color:MUTED,marginTop:8}}>{score===result.quiz.length?"Spotless. You'd write this chapter cold.":"Solid — review the misses and run it again."}</div>
-      <button className="b" onClick={restart} style={{marginTop:22,background:HEAL,color:"#fff",border:"none",borderRadius:10,padding:"11px 22px",fontSize:14,fontWeight:600,cursor:"pointer"}}>Retake quiz</button>
+      <div style={{fontFamily:"'Fraunces',serif",fontSize:40,color:HEAL}}>{score}/{quiz.length}</div>
+      <div style={{fontSize:15,color:MUTED,marginTop:8,marginBottom:24}}>{score===quiz.length?"Spotless. You'd write this chapter cold.":"Solid — review the misses and run it again."}</div>
+      {genErr&&<div style={{color:ACCENT,fontSize:13,marginBottom:12}}>{genErr}</div>}
+      <div style={{display:"flex",gap:12,justifyContent:"center",flexWrap:"wrap"}}>
+        <button className="b" onClick={retake} style={{background:HEAL,color:"#fff",border:"none",borderRadius:10,padding:"11px 22px",fontSize:14,fontWeight:600,cursor:"pointer"}}>Retake (reshuffled)</button>
+        {pages&&pages.length>0&&(
+          <button className="b" onClick={generateNew} disabled={generating} style={{background:generating?MUTED:INK,color:"#fff",border:"none",borderRadius:10,padding:"11px 22px",fontSize:14,fontWeight:600,cursor:generating?"not-allowed":"pointer"}}>
+            {generating?"Generating…":"✦ New questions"}
+          </button>
+        )}
+      </div>
     </div>
   );
+
   return(
     <div style={{animation:"rise .4s ease both"}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,fontSize:12,color:MUTED,fontFamily:"'JetBrains Mono',monospace"}}>
-        <span>Question {idx+1} of {result.quiz.length}</span><span>Score {score}</span>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,fontSize:12,color:MUTED,fontFamily:"'JetBrains Mono',monospace",flexWrap:"wrap",gap:8}}>
+        <span>Question {idx+1} of {quiz.length}</span>
+        <span>Score {score}</span>
       </div>
-      <div style={{height:4,background:BONE,borderRadius:2,marginBottom:26}}><div style={{height:"100%",width:`${(idx/result.quiz.length)*100}%`,background:HEAL,borderRadius:2,transition:"width .3s"}}/></div>
+      <div style={{height:4,background:BONE,borderRadius:2,marginBottom:26}}>
+        <div style={{height:"100%",width:`${(idx/quiz.length)*100}%`,background:HEAL,borderRadius:2,transition:"width .3s"}}/>
+      </div>
       <div style={{fontFamily:"'Fraunces',serif",fontSize:21,lineHeight:1.35,marginBottom:22}}>{q.q}</div>
       <div style={{display:"grid",gap:10}}>
-        {q.options.map((opt,i)=>{const ok=chosen!=null&&i===q.correct,no=chosen===i&&i!==q.correct;return(
-          <button key={i} className="b" onClick={()=>pick(i)} disabled={chosen!=null} style={{textAlign:"left",padding:"14px 16px",borderRadius:10,fontSize:14.5,cursor:chosen!=null?"default":"pointer",background:ok?"#e6f3ec":no?"#f9e7e1":"#fff",border:`1.5px solid ${ok?HEAL:no?ACCENT:LINE}`,color:INK,fontWeight:500}}>{opt}</button>
-        );})}
+        {q.options.map((opt,i)=>{
+          const ok=chosen!=null&&i===q.correct,no=chosen===i&&i!==q.correct;
+          return(
+            <button key={i} className="b" onClick={()=>pick(i)} disabled={chosen!=null}
+              style={{textAlign:"left",padding:"14px 16px",borderRadius:10,fontSize:14.5,cursor:chosen!=null?"default":"pointer",background:ok?"#e6f3ec":no?"#f9e7e1":"#fff",border:`1.5px solid ${ok?HEAL:no?ACCENT:LINE}`,color:INK,fontWeight:500}}>
+              <span style={{fontFamily:"'JetBrains Mono',monospace",fontSize:11,color:MUTED,marginRight:8}}>{String.fromCharCode(65+i)}.</span>{opt}
+            </button>
+          );
+        })}
       </div>
       {chosen!=null&&(
         <div style={{marginTop:18,background:BONE,borderRadius:10,padding:"14px 16px",fontSize:13.5,lineHeight:1.55,color:"#28342f",animation:"rise .3s ease both"}}>
           <strong style={{color:HEAL_DK}}>Why: </strong>{q.why}{q.citation_page?<span style={{color:MUTED}}> · {book}, p.{q.citation_page}</span>:""}
-          <button className="b" onClick={next} style={{display:"block",marginTop:14,marginLeft:"auto",background:INK,color:PAPER,border:"none",borderRadius:8,padding:"9px 18px",fontSize:13,fontWeight:600,cursor:"pointer"}}>{idx+1>=result.quiz.length?"See score":"Next →"}</button>
+          <button className="b" onClick={next} style={{display:"block",marginTop:14,marginLeft:"auto",background:INK,color:PAPER,border:"none",borderRadius:8,padding:"9px 18px",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+            {idx+1>=quiz.length?"See score →":"Next →"}
+          </button>
         </div>
       )}
     </div>
