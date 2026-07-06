@@ -64,9 +64,39 @@ function scoreRelevance(text: string, keywords: string[]): number {
   return score;
 }
 
-function getRelevantPages(all: PageData[], query: string, maxChars = 35000): PageData[] {
+function getRelevantPages(all: PageData[], query: string, maxChars = 90000): PageData[] {
   const kws = extractKeywords(query);
-  const scored = all.map(p => ({ ...p, score: scoreRelevance(p.text, kws) }));
+  if (kws.length === 0) {
+    // No keywords — return first N pages up to budget
+    let budget = maxChars;
+    const result: PageData[] = [];
+    for (const p of all) {
+      if (budget <= 0) break;
+      const chunk = p.text.slice(0, budget);
+      budget -= chunk.length;
+      result.push({ ...p, text: chunk });
+    }
+    return result;
+  }
+  // TF-IDF-style: weight rare keywords higher
+  const kwFreq = new Map<string, number>();
+  for (const p of all) {
+    const lower = p.text.toLowerCase();
+    const seen = new Set<string>();
+    for (const kw of kws) { if (lower.includes(kw) && !seen.has(kw)) { kwFreq.set(kw, (kwFreq.get(kw) || 0) + 1); seen.add(kw); } }
+  }
+  const scored = all.map(p => {
+    const lower = p.text.toLowerCase();
+    let score = 0;
+    for (const kw of kws) {
+      const df = kwFreq.get(kw) || 1;
+      const idf = Math.log(all.length / df + 1);
+      let pos = 0, tf = 0;
+      while ((pos = lower.indexOf(kw, pos)) !== -1) { tf++; pos++; }
+      score += tf * idf;
+    }
+    return { ...p, score };
+  });
   scored.sort((a, b) => b.score - a.score || a.page - b.page);
   let budget = maxChars;
   const result: PageData[] = [];
@@ -262,7 +292,7 @@ export default function App() {
     setPageImages({});
     setErr("");
     try {
-      const relevant = getRelevantPages(all, topic, 35000);
+      const relevant = getRelevantPages(all, topic, 90000);
       const resp = await fetch("/api/topic", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ topic, pages: relevant, language }),
@@ -326,7 +356,7 @@ export default function App() {
     setChatLoading(true);
     setErr("");
     try {
-      const relevant = getRelevantPages(all, q, 40000);
+      const relevant = getRelevantPages(all, q, 70000);
       const history = chatHistory.slice(-10).map(m => ({ role: m.role, content: m.content }));
       const resp = await fetch("/api/ask", {
         method: "POST", headers: { "Content-Type": "application/json" },
