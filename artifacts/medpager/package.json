@@ -77,6 +77,8 @@
   },
   "dependencies": {
     "jszip": "^3.10.1",
-    "pdfjs-dist": "^6.1.200"
+    "pdfjs-dist": "^6.1.200",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
   }
 }

@@ -7,6 +7,10 @@ import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import JSZip from "jszip";
 import { useAuth, type AuthUser } from "@workspace/replit-auth-web";
 import type { FormEvent } from "react";
+// @ts-ignore
+import ReactMarkdown from "react-markdown";
+// @ts-ignore
+import remarkGfm from "remark-gfm";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
@@ -430,6 +434,40 @@ function AppInner({ user, logout }: { user: AuthUser; logout: () => void }) {
         textarea,input{outline:none}
         ::-webkit-scrollbar{width:6px;height:6px}
         ::-webkit-scrollbar-thumb{background:${LINE};border-radius:3px}
+
+        /* ── Markdown body (long answer sections) ── */
+        .md-body p{margin:0 0 .75em}
+        .md-body p:last-child{margin-bottom:0}
+        .md-body ul,.md-body ol{margin:.5em 0 .75em 1.4em;padding:0}
+        .md-body li{margin:.3em 0;line-height:1.7}
+        .md-body li>ul,.md-body li>ol{margin:.2em 0 .2em 1.2em}
+        .md-body strong{font-weight:600;color:${INK}}
+        .md-body em{font-style:italic}
+        .md-body h1,.md-body h2,.md-body h3,.md-body h4{font-family:'Fraunces',serif;font-weight:600;line-height:1.25;margin:.9em 0 .4em;color:${INK}}
+        .md-body h1{font-size:1.25em}.md-body h2{font-size:1.12em}.md-body h3{font-size:1em}
+        .md-body code{font-family:'JetBrains Mono',monospace;font-size:.87em;background:${BONE};border-radius:4px;padding:.15em .4em;color:${HEAL_DK}}
+        .md-body pre{background:${BONE};border-radius:8px;padding:12px 14px;overflow-x:auto;margin:.5em 0}
+        .md-body pre code{background:none;padding:0;font-size:.85em}
+        .md-body blockquote{border-left:3px solid ${LINE};margin:.5em 0;padding:.2em .8em .2em 1em;color:${MUTED}}
+        .md-body table{border-collapse:collapse;width:100%;font-size:.93em;margin:.6em 0}
+        .md-body th{background:${BONE};font-weight:600;text-align:left;padding:7px 10px;border:1px solid ${LINE}}
+        .md-body td{padding:6px 10px;border:1px solid ${LINE}}
+        .md-body tr:nth-child(even) td{background:#faf9f5}
+        .md-body hr{border:none;border-top:1px solid ${LINE};margin:.8em 0}
+
+        /* ── Markdown in chat bubbles ── */
+        .md-chat-ai p,.md-chat-user p{margin:0 0 .5em}
+        .md-chat-ai p:last-child,.md-chat-user p:last-child{margin-bottom:0}
+        .md-chat-ai ul,.md-chat-ai ol{margin:.3em 0 .5em 1.3em;padding:0}
+        .md-chat-ai li{margin:.25em 0;line-height:1.65}
+        .md-chat-ai strong,.md-chat-user strong{font-weight:600}
+        .md-chat-ai em,.md-chat-user em{font-style:italic}
+        .md-chat-ai code{font-family:'JetBrains Mono',monospace;font-size:.85em;background:${BONE};border-radius:4px;padding:.1em .35em;color:${HEAL_DK}}
+        .md-chat-user code{font-family:'JetBrains Mono',monospace;font-size:.85em;background:rgba(255,255,255,.15);border-radius:4px;padding:.1em .35em}
+        .md-chat-ai h1,.md-chat-ai h2,.md-chat-ai h3{font-family:'Fraunces',serif;font-weight:600;margin:.6em 0 .3em;line-height:1.2}
+        .md-chat-ai table{border-collapse:collapse;font-size:.88em;margin:.4em 0;width:100%}
+        .md-chat-ai th{background:${BONE};font-weight:600;padding:5px 9px;border:1px solid ${LINE};text-align:left}
+        .md-chat-ai td{padding:5px 9px;border:1px solid ${LINE}}
       `}</style>
 
       <Header
@@ -702,7 +740,9 @@ function LongAnswerView({ answer, pageImages, onCrossQuestion }: { answer: LongA
           return (
             <div key={key} style={{ padding: "18px 0", borderBottom: `1px solid ${BONE}` }}>
               <div style={{ fontFamily: "'Fraunces',serif", fontSize: 18, color: ACCENT, marginBottom: 8 }}>{SECTION_LABELS[key]}</div>
-              <p style={{ margin: 0, fontSize: 14.5, lineHeight: 1.7, color: "#28342f", whiteSpace: "pre-line" }}>{text}</p>
+              <div className="md-body" style={{ fontSize: 14.5, lineHeight: 1.75, color: "#28342f" }}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+              </div>
               {cits.map((c, i) => (
                 <div key={i} style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "flex-start" }}>
                   <div style={{ fontSize: 12, color: HEAL_DK, background: "#eef4f0", borderRadius: 6, padding: "5px 10px", border: `1px solid #cfe3d8`, fontFamily: "'JetBrains Mono',monospace" }}>
@@ -869,7 +909,9 @@ function ChatBubble({ msg, onCrossQuestion }: { msg: ChatMessage; onCrossQuestio
   return (
     <div style={{ display: "flex", justifyContent: isUser ? "flex-end" : "flex-start", animation: "rise .3s ease both" }}>
       <div style={{ maxWidth: "78%", background: isUser ? INK : "#fff", color: isUser ? PAPER : INK, borderRadius: isUser ? "14px 14px 4px 14px" : "4px 14px 14px 14px", padding: "12px 16px", border: isUser ? "none" : `1px solid ${LINE}`, fontSize: 14.5, lineHeight: 1.65 }}>
-        <div style={{ whiteSpace: "pre-wrap" }}>{msg.content}</div>
+        <div className={isUser ? "md-chat-user" : "md-chat-ai"}>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+        </div>
         {msg.citation && msg.citation.page && (
           <div style={{ marginTop: 10, fontSize: 12, color: isUser ? "#9db8ac" : HEAL_DK, fontFamily: "'JetBrains Mono',monospace", background: isUser ? "rgba(255,255,255,.08)" : "#eef4f0", borderRadius: 6, padding: "5px 9px", display: "inline-block" }}>
             {msg.citation.sourceName && <span>{msg.citation.sourceName} · </span>}p.{msg.citation.page}
