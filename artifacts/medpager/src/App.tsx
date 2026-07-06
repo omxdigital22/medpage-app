@@ -218,10 +218,24 @@ function AppInner({ user, logout }: { user: AuthUser; logout: () => void }) {
   const [err, setErr] = useState("");
   const msgIdRef = useRef(0);
   const sessionIdRef = useRef<string | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
+  const [sessions, setSessions] = useState<any[]>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [savedAnswersList, setSavedAnswersList] = useState<any[]>([]);
+  const [viewingAnswer, setViewingAnswer] = useState<LongAnswer | null>(null);
+
+  async function apiGet(path: string) {
+    const r = await fetch(path, { credentials: "include" });
+    return r.json();
+  }
 
   async function apiPost(path: string, body: unknown) {
     const r = await fetch(path, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     return r.json();
+  }
+
+  async function apiDelete(path: string) {
+    await fetch(path, { method: "DELETE", credentials: "include" });
   }
 
   async function ensureSession(title: string) {
@@ -230,6 +244,79 @@ function AppInner({ user, logout }: { user: AuthUser; logout: () => void }) {
     if (json.ok && json.session?.id) { sessionIdRef.current = json.session.id; }
     return sessionIdRef.current;
   }
+
+  async function loadSessions() {
+    setSessionsLoading(true);
+    const json = await apiGet("/api/data/sessions").catch(() => ({ ok: false }));
+    if (json.ok) setSessions(json.sessions || []);
+    setSessionsLoading(false);
+  }
+
+  async function loadSessionFromHistory(session: any) {
+    // Load messages and answers for this session
+    sessionIdRef.current = session.id;
+    const [msgRes, ansRes] = await Promise.all([
+      apiGet(`/api/data/sessions/${session.id}/messages`),
+      apiGet(`/api/data/sessions/${session.id}/answers`),
+    ]);
+    // Restore chat
+    if (msgRes.ok && msgRes.messages?.length > 0) {
+      const restored: ChatMessage[] = msgRes.messages.map((m: any, i: number) => ({
+        id: i + 1,
+        role: m.role,
+        content: m.content,
+        citation: m.citationPage ? { page: m.citationPage, quote: m.citationQuote, sourceName: m.sourceName || "" } : undefined,
+        crossQuestions: m.crossQuestions || undefined,
+      }));
+      msgIdRef.current = restored.length;
+      setChatHistory(restored);
+    } else {
+      setChatHistory([]);
+      msgIdRef.current = 0;
+    }
+    // Store saved answers for side panel
+    if (ansRes.ok) setSavedAnswersList(ansRes.answers || []);
+    // Restore mode/language
+    if (session.mode) setMode(session.mode);
+    if (session.language) setLanguage(session.language);
+    // Switch to workspace
+    setStage("workspace");
+    setTab("chat");
+    setShowHistory(false);
+  }
+
+  async function deleteSession(id: string) {
+    await apiDelete(`/api/data/sessions/${id}`);
+    setSessions(prev => prev.filter(s => s.id !== id));
+    if (sessionIdRef.current === id) {
+      sessionIdRef.current = null;
+    }
+  }
+
+  function startNewSession() {
+    sessionIdRef.current = null;
+    setSources([]);
+    setStage("upload");
+    setMode("longAnswer");
+    setTab("answer");
+    setTopics([]);
+    setSelectedTopic("");
+    setTopicInput("");
+    setCurrentAnswer(null);
+    setPageImages({});
+    setQuiz([]);
+    setQuizIdx(0); setQuizChosen(null); setQuizScore(0); setQuizFin(false);
+    setSeenStems([]);
+    setChatHistory([]);
+    setChatInput("");
+    setSavedAnswersList([]);
+    setViewingAnswer(null);
+    setErr("");
+    setShowHistory(false);
+  }
+
+  // Load sessions whenever history panel opens
+  useEffect(() => { if (showHistory) loadSessions(); }, [showHistory]);
 
   async function saveMessageToDb(sessionId: string, role: string, content: string, extra?: { citationPage?: number; citationQuote?: string; sourceName?: string; crossQuestions?: string[] }) {
     await apiPost(`/api/data/sessions/${sessionId}/messages`, { role, content, ...extra }).catch(() => {});
@@ -475,6 +562,8 @@ function AppInner({ user, logout }: { user: AuthUser; logout: () => void }) {
         mode={mode} setMode={m => { setMode(m); setTab(m === "longAnswer" ? "answer" : "mcq"); }}
         sourceCount={sources.length}
         user={user} logout={logout}
+        showHistory={showHistory} setShowHistory={setShowHistory}
+        onNewSession={startNewSession}
       />
 
       {stage === "upload" ? (
@@ -498,6 +587,20 @@ function AppInner({ user, logout }: { user: AuthUser; logout: () => void }) {
           onAddFiles={handleFiles}
           sources_images={sources.filter(s => s.imageDataUrl).map(s => ({ name: s.name, url: s.imageDataUrl! }))}
           onCrossQuestion={(q: string) => { setTab("chat"); sendChat("", q); }}
+          savedAnswersList={savedAnswersList}
+          viewingAnswer={viewingAnswer} setViewingAnswer={setViewingAnswer}
+        />
+      )}
+
+      {/* History panel slide-in */}
+      {showHistory && (
+        <HistoryPanel
+          sessions={sessions} loading={sessionsLoading}
+          currentSessionId={sessionIdRef.current}
+          onLoad={loadSessionFromHistory}
+          onDelete={deleteSession}
+          onNew={startNewSession}
+          onClose={() => setShowHistory(false)}
         />
       )}
     </div>
@@ -506,7 +609,7 @@ function AppInner({ user, logout }: { user: AuthUser; logout: () => void }) {
 
 // ── Header ─────────────────────────────────────────────────────────────────
 
-function Header({ language, setLanguage, mode, setMode, sourceCount, user, logout }: any) {
+function Header({ language, setLanguage, mode, setMode, sourceCount, user, logout, showHistory, setShowHistory, onNewSession }: any) {
   const initials = [user?.firstName, user?.lastName].filter(Boolean).map((n: string) => n[0]).join("") || (user?.email?.[0] ?? "U").toUpperCase();
   const displayName = [user?.firstName, user?.lastName].filter(Boolean).join(" ") || user?.email || "You";
   return (
@@ -516,6 +619,16 @@ function Header({ language, setLanguage, mode, setMode, sourceCount, user, logou
         <div style={{ fontFamily: "'Fraunces',serif", fontWeight: 700, fontSize: 19 }}>MedPager</div>
         {sourceCount > 0 && <span style={{ fontSize: 12, color: MUTED, background: BONE, borderRadius: 6, padding: "2px 8px" }}>{sourceCount} source{sourceCount !== 1 ? "s" : ""}</span>}
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <button className="b" onClick={onNewSession}
+            title="New session"
+            style={{ fontSize: 12, padding: "6px 12px", borderRadius: 8, border: `1px solid ${LINE}`, background: "#fff", color: MUTED, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, fontFamily: "inherit" }}>
+            ＋ New
+          </button>
+          <button className="b" onClick={() => setShowHistory(!showHistory)}
+            title="Session history"
+            style={{ fontSize: 12, padding: "6px 12px", borderRadius: 8, border: `1px solid ${showHistory ? HEAL : LINE}`, background: showHistory ? "#eef4f0" : "#fff", color: showHistory ? HEAL_DK : MUTED, cursor: "pointer", display: "flex", alignItems: "center", gap: 5, fontFamily: "inherit", fontWeight: showHistory ? 600 : 400 }}>
+            ☰ History
+          </button>
           <div style={{ display: "flex", borderRadius: 8, border: `1px solid ${LINE}`, overflow: "hidden" }}>
             {(["longAnswer","mcq"] as const).map(m => (
               <button key={m} className="b" onClick={() => setMode(m)}
@@ -588,8 +701,9 @@ function UploadStage({ onFiles }: { onFiles: (f: FileList | File[]) => void }) {
 // ── Workspace Stage ─────────────────────────────────────────────────────────
 
 function WorkspaceStage(props: any) {
-  const { sources, allDone, processedPages, totalPages, mode, tab, setTab, err, onAddFiles, sources_images } = props;
+  const { sources, allDone, processedPages, totalPages, mode, tab, setTab, err, onAddFiles, savedAnswersList, viewingAnswer, setViewingAnswer } = props;
   const addRef = useRef<HTMLInputElement>(null);
+  const savedCount = savedAnswersList?.length || 0;
 
   return (
     <div style={{ maxWidth: 1200, margin: "0 auto", padding: "16px 24px 60px" }}>
@@ -616,14 +730,22 @@ function WorkspaceStage(props: any) {
       {/* Tabs */}
       <div style={{ display: "flex", gap: 2, borderBottom: `1px solid ${LINE}`, marginBottom: 24 }}>
         {mode === "longAnswer"
-          ? [["answer","Long Answer"],["chat","Chat & History"]].map(([k, l]) => <Tab key={k} id={k} label={l} active={tab} setTab={setTab} />)
-          : [["mcq","MCQ"],["chat","Chat & History"]].map(([k, l]) => <Tab key={k} id={k} label={l} active={tab} setTab={setTab} />)
+          ? [["answer","Long Answer"],["chat","Chat"]].map(([k, l]) => <Tab key={k} id={k} label={l} active={tab} setTab={setTab} />)
+          : [["mcq","MCQ"],["chat","Chat"]].map(([k, l]) => <Tab key={k} id={k} label={l} active={tab} setTab={setTab} />)
         }
+        {savedCount > 0 && <Tab id="saved" label={`Saved (${savedCount})`} active={tab} setTab={setTab} />}
       </div>
 
       {tab === "answer" && mode === "longAnswer" && <LongAnswerTab {...props} />}
       {tab === "mcq" && mode === "mcq" && <MCQTab {...props} />}
       {tab === "chat" && <ChatTab {...props} />}
+      {tab === "saved" && (
+        <SavedAnswersTab
+          answers={savedAnswersList}
+          viewingAnswer={viewingAnswer}
+          setViewingAnswer={setViewingAnswer}
+        />
+      )}
     </div>
   );
 }
@@ -930,6 +1052,139 @@ function ChatBubble({ msg, onCrossQuestion }: { msg: ChatMessage; onCrossQuestio
         )}
       </div>
     </div>
+  );
+}
+
+// ── Saved Answers Tab ────────────────────────────────────────────────────────
+
+function SavedAnswersTab({ answers, viewingAnswer, setViewingAnswer }: any) {
+  if (!answers || answers.length === 0) {
+    return (
+      <div style={{ textAlign: "center", padding: "60px 24px", color: MUTED }}>
+        <div style={{ fontSize: 32, marginBottom: 12 }}>📋</div>
+        <div style={{ fontSize: 15, fontWeight: 500 }}>No saved answers yet</div>
+        <div style={{ fontSize: 13, marginTop: 6 }}>Long answers generated in this session appear here.</div>
+      </div>
+    );
+  }
+
+  if (viewingAnswer) {
+    return (
+      <div>
+        <button className="b" onClick={() => setViewingAnswer(null)}
+          style={{ fontSize: 13, color: HEAL_DK, background: "transparent", border: "none", cursor: "pointer", padding: "0 0 16px", display: "flex", alignItems: "center", gap: 6, fontFamily: "inherit" }}>
+          ← Back to saved answers
+        </button>
+        <div style={{ fontFamily: "'Fraunces',serif", fontSize: 24, fontWeight: 600, marginBottom: 24 }}>{viewingAnswer.topic}</div>
+        {Object.entries(viewingAnswer.sections || {}).map(([key, text]: [string, any]) => (
+          <div key={key} style={{ padding: "16px 0", borderBottom: `1px solid ${BONE}` }}>
+            <div style={{ fontFamily: "'Fraunces',serif", fontSize: 16, color: ACCENT, marginBottom: 8 }}>{SECTION_LABELS[key] || key}</div>
+            <div className="md-body" style={{ fontSize: 14.5, lineHeight: 1.75, color: "#28342f" }}>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{String(text)}</ReactMarkdown>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      {answers.map((a: any) => (
+        <div key={a.id} onClick={() => setViewingAnswer({ topic: a.topic, sections: a.sections })}
+          style={{ background: "#fff", border: `1px solid ${LINE}`, borderRadius: 12, padding: "16px 20px", cursor: "pointer", transition: "box-shadow .15s", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}
+          onMouseEnter={e => (e.currentTarget.style.boxShadow = "0 2px 10px rgba(0,0,0,.07)")}
+          onMouseLeave={e => (e.currentTarget.style.boxShadow = "none")}>
+          <div>
+            <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>{a.topic}</div>
+            <div style={{ fontSize: 12, color: MUTED }}>{new Date(a.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</div>
+          </div>
+          <div style={{ fontSize: 12, color: HEAL_DK, background: "#eef4f0", borderRadius: 6, padding: "3px 8px", whiteSpace: "nowrap", marginLeft: 12, flexShrink: 0 }}>
+            {Object.keys(a.sections || {}).length} sections →
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── History Panel ────────────────────────────────────────────────────────────
+
+function HistoryPanel({ sessions, loading, currentSessionId, onLoad, onDelete, onNew, onClose }: any) {
+  const [deleting, setDeleting] = useState<string | null>(null);
+
+  async function handleDelete(e: React.MouseEvent, id: string) {
+    e.stopPropagation();
+    setDeleting(id);
+    await onDelete(id);
+    setDeleting(null);
+  }
+
+  return (
+    <>
+      {/* backdrop */}
+      <div onClick={onClose}
+        style={{ position: "fixed", inset: 0, background: "rgba(19,32,28,.35)", zIndex: 40 }} />
+      {/* panel */}
+      <div style={{ position: "fixed", top: 0, right: 0, bottom: 0, width: 380, background: PAPER, borderLeft: `1px solid ${LINE}`, zIndex: 50, display: "flex", flexDirection: "column", animation: "slideIn .22s ease both" }}>
+        <style>{`@keyframes slideIn{from{transform:translateX(30px);opacity:0}to{transform:none;opacity:1}}`}</style>
+        {/* header */}
+        <div style={{ padding: "18px 20px", borderBottom: `1px solid ${LINE}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ fontFamily: "'Fraunces',serif", fontSize: 18, fontWeight: 600 }}>Session History</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="b" onClick={onNew}
+              style={{ fontSize: 12, padding: "6px 12px", borderRadius: 8, background: HEAL, color: "#fff", border: "none", cursor: "pointer", fontFamily: "inherit", fontWeight: 600 }}>
+              ＋ New
+            </button>
+            <button className="b" onClick={onClose}
+              style={{ fontSize: 18, lineHeight: 1, background: "transparent", border: "none", color: MUTED, cursor: "pointer", padding: "4px 8px" }}>×</button>
+          </div>
+        </div>
+        {/* list */}
+        <div style={{ flex: 1, overflowY: "auto", padding: "12px 16px" }}>
+          {loading ? (
+            <div style={{ display: "flex", justifyContent: "center", padding: 40 }}><Spinner size={24} /></div>
+          ) : sessions.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "48px 16px", color: MUTED }}>
+              <div style={{ fontSize: 28, marginBottom: 10 }}>📚</div>
+              <div style={{ fontSize: 14 }}>No sessions yet. Upload a file to get started.</div>
+            </div>
+          ) : (
+            sessions.map((s: any) => {
+              const isCurrent = s.id === currentSessionId;
+              return (
+                <div key={s.id} onClick={() => onLoad(s)}
+                  style={{ background: isCurrent ? "#eef4f0" : "#fff", border: `1px solid ${isCurrent ? HEAL : LINE}`, borderRadius: 10, padding: "13px 14px", marginBottom: 8, cursor: "pointer", transition: "box-shadow .15s", position: "relative" }}
+                  onMouseEnter={e => (e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,.07)")}
+                  onMouseLeave={e => (e.currentTarget.style.boxShadow = "none")}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.title}</div>
+                      <div style={{ fontSize: 12, color: MUTED, marginTop: 3 }}>
+                        {new Date(s.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                        {" · "}{s.mode === "longAnswer" ? "Long Answer" : "MCQ"}
+                        {" · "}{s.language}
+                      </div>
+                      <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+                        {s.answerCount > 0 && <span style={{ fontSize: 11, background: BONE, borderRadius: 4, padding: "2px 6px", color: MUTED }}>{s.answerCount} answer{s.answerCount !== 1 ? "s" : ""}</span>}
+                        {s.messageCount > 0 && <span style={{ fontSize: 11, background: BONE, borderRadius: 4, padding: "2px 6px", color: MUTED }}>{s.messageCount} message{s.messageCount !== 1 ? "s" : ""}</span>}
+                        {isCurrent && <span style={{ fontSize: 11, background: "#d8ede5", borderRadius: 4, padding: "2px 6px", color: HEAL_DK, fontWeight: 600 }}>Current</span>}
+                      </div>
+                    </div>
+                    <button className="b" onClick={e => handleDelete(e, s.id)}
+                      disabled={deleting === s.id}
+                      title="Delete session"
+                      style={{ fontSize: 16, background: "transparent", border: "none", color: deleting === s.id ? LINE : "#c9604f55", cursor: "pointer", padding: "2px 6px", flexShrink: 0, lineHeight: 1 }}>
+                      {deleting === s.id ? "…" : "×"}
+                    </button>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+    </>
   );
 }
 
