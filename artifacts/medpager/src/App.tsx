@@ -1,10 +1,11 @@
-import React, { useState, useRef, useCallback } from "react";
+import React, { useState, useRef, useCallback, useEffect } from "react";
 // @ts-ignore
 import * as pdfjsLib from "pdfjs-dist";
 // @ts-ignore
 import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 // @ts-ignore
 import JSZip from "jszip";
+import { useAuth, type AuthUser } from "@workspace/replit-auth-web";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
@@ -186,7 +187,7 @@ async function renderPdfPage(pdfDoc: any, pageNum: number): Promise<string> {
 
 // ── main app ───────────────────────────────────────────────────────────────
 
-export default function App() {
+function AppInner({ user, logout }: { user: AuthUser; logout: () => void }) {
   const [sources, setSources] = useState<ProcessedSource[]>([]);
   const [stage, setStage] = useState<"upload"|"workspace">("upload");
   const [mode, setMode] = useState<"longAnswer"|"mcq">("longAnswer");
@@ -211,6 +212,27 @@ export default function App() {
   const [chatLoading, setChatLoading] = useState(false);
   const [err, setErr] = useState("");
   const msgIdRef = useRef(0);
+  const sessionIdRef = useRef<string | null>(null);
+
+  async function apiPost(path: string, body: unknown) {
+    const r = await fetch(path, { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    return r.json();
+  }
+
+  async function ensureSession(title: string) {
+    if (sessionIdRef.current) return sessionIdRef.current;
+    const json = await apiPost("/api/data/sessions", { title, mode, language });
+    if (json.ok && json.session?.id) { sessionIdRef.current = json.session.id; }
+    return sessionIdRef.current;
+  }
+
+  async function saveMessageToDb(sessionId: string, role: string, content: string, extra?: { citationPage?: number; citationQuote?: string; sourceName?: string; crossQuestions?: string[] }) {
+    await apiPost(`/api/data/sessions/${sessionId}/messages`, { role, content, ...extra }).catch(() => {});
+  }
+
+  async function saveAnswerToDb(sessionId: string, answer: LongAnswer) {
+    await apiPost(`/api/data/sessions/${sessionId}/answers`, { topic: answer.topic, sections: answer.sections, citations: answer.citations || [] }).catch(() => {});
+  }
 
   const getAllPages = useCallback((): PageData[] =>
     sources.filter(s => s.status === "done").flatMap(s =>
@@ -229,6 +251,10 @@ export default function App() {
     }));
     setSources(prev => [...prev, ...newSources]);
     setStage("workspace");
+
+    // create a DB session named after the first file
+    const sessionTitle = fileArr[0]?.name.replace(/\.[^.]+$/, "") || "Study Session";
+    ensureSession(sessionTitle);
 
     for (let i = 0; i < fileArr.length; i++) {
       const file = fileArr[i];
@@ -311,6 +337,9 @@ export default function App() {
             } catch {}
           }
         }
+        // persist to DB
+        const sid = sessionIdRef.current;
+        if (sid) saveAnswerToDb(sid, json.answer);
       } else setErr(json.error || "Failed to generate answer");
     } catch (e) { setErr(String(e)); }
     setAnswerLoading(false);
@@ -355,6 +384,8 @@ export default function App() {
     setChatInput("");
     setChatLoading(true);
     setErr("");
+    const sid = sessionIdRef.current;
+    if (sid) saveMessageToDb(sid, "user", q);
     try {
       const relevant = getRelevantPages(all, q, 70000);
       const history = chatHistory.slice(-10).map(m => ({ role: m.role, content: m.content }));
@@ -371,8 +402,10 @@ export default function App() {
           crossQuestions: json.crossQuestions,
         };
         setChatHistory(prev => [...prev, aiMsg]);
+        if (sid) saveMessageToDb(sid, "assistant", json.answer, { citationPage: json.citation_page, citationQuote: json.citation_quote, sourceName: json.source_name, crossQuestions: json.crossQuestions });
       } else {
-        setChatHistory(prev => [...prev, { id: ++msgIdRef.current, role: "assistant", content: json.error || "Something went wrong." }]);
+        const errMsg = json.error || "Something went wrong.";
+        setChatHistory(prev => [...prev, { id: ++msgIdRef.current, role: "assistant", content: errMsg }]);
       }
     } catch (e) {
       setChatHistory(prev => [...prev, { id: ++msgIdRef.current, role: "assistant", content: String(e) }]);
@@ -402,6 +435,7 @@ export default function App() {
         language={language} setLanguage={setLanguage}
         mode={mode} setMode={m => { setMode(m); setTab(m === "longAnswer" ? "answer" : "mcq"); }}
         sourceCount={sources.length}
+        user={user} logout={logout}
       />
 
       {stage === "upload" ? (
@@ -433,7 +467,9 @@ export default function App() {
 
 // ── Header ─────────────────────────────────────────────────────────────────
 
-function Header({ language, setLanguage, mode, setMode, sourceCount }: any) {
+function Header({ language, setLanguage, mode, setMode, sourceCount, user, logout }: any) {
+  const initials = [user?.firstName, user?.lastName].filter(Boolean).map((n: string) => n[0]).join("") || (user?.email?.[0] ?? "U").toUpperCase();
+  const displayName = [user?.firstName, user?.lastName].filter(Boolean).join(" ") || user?.email || "You";
   return (
     <header style={{ borderBottom: `1px solid ${LINE}`, background: PAPER, position: "sticky", top: 0, zIndex: 30 }}>
       <div style={{ maxWidth: 1200, margin: "0 auto", padding: "12px 24px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
@@ -453,6 +489,18 @@ function Header({ language, setLanguage, mode, setMode, sourceCount }: any) {
             style={{ fontFamily: "inherit", fontSize: 13, padding: "6px 10px", borderRadius: 8, border: `1px solid ${LINE}`, background: "#fff", color: INK }}>
             {LANGS.map(l => <option key={l}>{l}</option>)}
           </select>
+          {/* User avatar + logout */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, borderLeft: `1px solid ${LINE}`, paddingLeft: 10 }}>
+            {user?.profileImageUrl
+              ? <img src={user.profileImageUrl} alt={displayName} style={{ width: 30, height: 30, borderRadius: "50%", objectFit: "cover", border: `1.5px solid ${LINE}` }} />
+              : <div style={{ width: 30, height: 30, borderRadius: "50%", background: HEAL, display: "grid", placeItems: "center", color: "#fff", fontSize: 12, fontWeight: 700, flexShrink: 0 }}>{initials}</div>
+            }
+            <span style={{ fontSize: 13, color: INK, fontWeight: 500, maxWidth: 110, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{displayName}</span>
+            <button className="b" onClick={logout}
+              style={{ fontSize: 12, color: MUTED, background: "transparent", border: `1px solid ${LINE}`, borderRadius: 6, padding: "4px 9px", cursor: "pointer", fontFamily: "inherit" }}>
+              Sign out
+            </button>
+          </div>
         </div>
       </div>
     </header>
@@ -846,4 +894,70 @@ function ChatBubble({ msg, onCrossQuestion }: { msg: ChatMessage; onCrossQuestio
 
 function Spinner({ size = 16 }: { size?: number }) {
   return <span style={{ width: size, height: size, borderRadius: "50%", border: `2px solid ${HEAL}`, borderTopColor: "transparent", display: "inline-block", animation: "spin .7s linear infinite", flexShrink: 0 }} />;
+}
+
+// ── Login Page ───────────────────────────────────────────────────────────────
+
+function LoginPage({ login }: { login: () => void }) {
+  return (
+    <div style={{ minHeight: "100vh", background: PAPER, color: INK, fontFamily: "'Inter',system-ui,sans-serif", display: "flex", flexDirection: "column" }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+        *{box-sizing:border-box}
+        .b:focus-visible{outline:2px solid ${HEAL};outline-offset:2px}
+        @keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+      `}</style>
+      {/* nav */}
+      <header style={{ borderBottom: `1px solid ${LINE}`, padding: "14px 32px", display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ width: 30, height: 30, borderRadius: 8, background: HEAL, display: "grid", placeItems: "center", color: "#fff", fontWeight: 700, fontFamily: "'Fraunces',serif", fontSize: 18 }}>+</div>
+        <div style={{ fontFamily: "'Fraunces',serif", fontWeight: 700, fontSize: 19 }}>MedPager</div>
+      </header>
+      {/* hero */}
+      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "40px 24px" }}>
+        <div style={{ maxWidth: 520, width: "100%", animation: "rise .5s ease both" }}>
+          <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: HEAL_DK, letterSpacing: "0.14em", textTransform: "uppercase", marginBottom: 14 }}>Study smarter</div>
+          <h1 style={{ fontFamily: "'Fraunces',serif", fontSize: 44, lineHeight: 1.1, margin: "0 0 18px", letterSpacing: "-0.02em" }}>
+            Your entire textbook,<br/>answered on demand.
+          </h1>
+          <p style={{ fontSize: 16, color: MUTED, lineHeight: 1.65, marginBottom: 36 }}>
+            Upload any PDF, image, Word doc, or PowerPoint. MedPager generates structured long answers across 7 clinical sections and unlimited MCQs — all cited to your own sources.
+          </p>
+          <button className="b" onClick={login}
+            style={{ background: HEAL, color: "#fff", border: "none", borderRadius: 12, padding: "15px 32px", fontSize: 16, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", transition: "background .15s" }}
+            onMouseOver={e => (e.currentTarget.style.background = HEAL_DK)}
+            onMouseOut={e => (e.currentTarget.style.background = HEAL)}>
+            Sign in to get started →
+          </button>
+          <div style={{ marginTop: 44, display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 20 }}>
+            {[["📚","Up to 5 000 pages","Process entire textbooks at once."],["🧠","Structured answers","Introduction → Complications across 7 sections."],["✦","Self-test MCQs","Clinical vignettes with detailed explanations."]].map(([icon, title, desc]) => (
+              <div key={title} style={{ background: "#fff", border: `1px solid ${LINE}`, borderRadius: 12, padding: "16px 14px" }}>
+                <div style={{ fontSize: 20, marginBottom: 8 }}>{icon}</div>
+                <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 5 }}>{title}</div>
+                <div style={{ fontSize: 13, color: MUTED, lineHeight: 1.5 }}>{desc}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── App root (auth gate) ──────────────────────────────────────────────────────
+
+export default function App() {
+  const { user, isLoading, login, logout } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div style={{ minHeight: "100vh", background: PAPER, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style>
+        <span style={{ width: 28, height: 28, borderRadius: "50%", border: `2px solid ${HEAL}`, borderTopColor: "transparent", display: "inline-block", animation: "spin .7s linear infinite" }} />
+      </div>
+    );
+  }
+
+  if (!user) return <LoginPage login={login} />;
+
+  return <AppInner user={user} logout={logout} />;
 }
