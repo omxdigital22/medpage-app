@@ -1,6 +1,6 @@
 # MedPager — Phase 1 (live, cited, multi-language)
 
-A study platform for Indian medical students. Upload a textbook **chapter** PDF →
+A study platform for Indian medical studentss. Upload a textbook **chapter** PDF →
 get an exam-format pager, a tutor, a quiz, and revision cards — in the student's
 chosen language. **Every point shows the book, page, and the exact source line**,
 so it can be verified against the textbook.
