@@ -6,6 +6,7 @@ import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 // @ts-ignore
 import JSZip from "jszip";
 import { useAuth, type AuthUser } from "@workspace/replit-auth-web";
+import type { FormEvent } from "react";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
@@ -898,7 +899,39 @@ function Spinner({ size = 16 }: { size?: number }) {
 
 // ── Login Page ───────────────────────────────────────────────────────────────
 
-function LoginPage({ login }: { login: () => void }) {
+type LoginPageProps = {
+  login: () => void;
+  loginWithPassword: (email: string, password: string) => Promise<{ ok: boolean; error?: string }>;
+  register: (email: string, password: string, firstName?: string, lastName?: string) => Promise<{ ok: boolean; error?: string }>;
+};
+
+function LoginPage({ login, loginWithPassword, register }: LoginPageProps) {
+  const [tab, setTab] = useState<"signin" | "register">("signin");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [formErr, setFormErr] = useState("");
+  const [showPass, setShowPass] = useState(false);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setFormErr("");
+    setSubmitting(true);
+    const result = tab === "signin"
+      ? await loginWithPassword(email, password)
+      : await register(email, password, firstName || undefined, lastName || undefined);
+    if (!result.ok) setFormErr(result.error || "Something went wrong.");
+    setSubmitting(false);
+  }
+
+  const inputStyle: React.CSSProperties = {
+    width: "100%", padding: "11px 13px", fontSize: 14, fontFamily: "inherit",
+    border: `1.5px solid ${LINE}`, borderRadius: 9, background: "#fff", color: INK,
+    outline: "none", transition: "border-color .15s",
+  };
+
   return (
     <div style={{ minHeight: "100vh", background: PAPER, color: INK, fontFamily: "'Inter',system-ui,sans-serif", display: "flex", flexDirection: "column" }}>
       <style>{`
@@ -906,37 +939,103 @@ function LoginPage({ login }: { login: () => void }) {
         *{box-sizing:border-box}
         .b:focus-visible{outline:2px solid ${HEAL};outline-offset:2px}
         @keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+        @keyframes spin{to{transform:rotate(360deg)}}
+        input:focus{border-color:${HEAL} !important}
       `}</style>
       {/* nav */}
       <header style={{ borderBottom: `1px solid ${LINE}`, padding: "14px 32px", display: "flex", alignItems: "center", gap: 10 }}>
         <div style={{ width: 30, height: 30, borderRadius: 8, background: HEAL, display: "grid", placeItems: "center", color: "#fff", fontWeight: 700, fontFamily: "'Fraunces',serif", fontSize: 18 }}>+</div>
         <div style={{ fontFamily: "'Fraunces',serif", fontWeight: 700, fontSize: 19 }}>MedPager</div>
       </header>
-      {/* hero */}
-      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "40px 24px" }}>
-        <div style={{ maxWidth: 520, width: "100%", animation: "rise .5s ease both" }}>
-          <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: HEAL_DK, letterSpacing: "0.14em", textTransform: "uppercase", marginBottom: 14 }}>Study smarter</div>
-          <h1 style={{ fontFamily: "'Fraunces',serif", fontSize: 44, lineHeight: 1.1, margin: "0 0 18px", letterSpacing: "-0.02em" }}>
+      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "32px 16px", gap: 64, flexWrap: "wrap" }}>
+        {/* left — tagline */}
+        <div style={{ maxWidth: 380, animation: "rise .4s ease both" }}>
+          <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 11, color: HEAL_DK, letterSpacing: "0.14em", textTransform: "uppercase", marginBottom: 12 }}>Study smarter</div>
+          <h1 style={{ fontFamily: "'Fraunces',serif", fontSize: 38, lineHeight: 1.1, margin: "0 0 16px", letterSpacing: "-0.02em" }}>
             Your entire textbook,<br/>answered on demand.
           </h1>
-          <p style={{ fontSize: 16, color: MUTED, lineHeight: 1.65, marginBottom: 36 }}>
-            Upload any PDF, image, Word doc, or PowerPoint. MedPager generates structured long answers across 7 clinical sections and unlimited MCQs — all cited to your own sources.
+          <p style={{ fontSize: 14.5, color: MUTED, lineHeight: 1.65, margin: "0 0 28px" }}>
+            Upload any PDF, image, Word doc, or PowerPoint. MedPager generates structured long answers and MCQs — all cited to your own sources.
           </p>
-          <button className="b" onClick={login}
-            style={{ background: HEAL, color: "#fff", border: "none", borderRadius: 12, padding: "15px 32px", fontSize: 16, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", transition: "background .15s" }}
-            onMouseOver={e => (e.currentTarget.style.background = HEAL_DK)}
-            onMouseOut={e => (e.currentTarget.style.background = HEAL)}>
-            Sign in to get started →
-          </button>
-          <div style={{ marginTop: 44, display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 20 }}>
-            {[["📚","Up to 5 000 pages","Process entire textbooks at once."],["🧠","Structured answers","Introduction → Complications across 7 sections."],["✦","Self-test MCQs","Clinical vignettes with detailed explanations."]].map(([icon, title, desc]) => (
-              <div key={title} style={{ background: "#fff", border: `1px solid ${LINE}`, borderRadius: 12, padding: "16px 14px" }}>
-                <div style={{ fontSize: 20, marginBottom: 8 }}>{icon}</div>
-                <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 5 }}>{title}</div>
-                <div style={{ fontSize: 13, color: MUTED, lineHeight: 1.5 }}>{desc}</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {[["📚","Up to 5 000 pages"],["🧠","7-section structured answers"],["✦","Clinical vignette MCQs"]].map(([icon, label]) => (
+              <div key={label} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13.5, color: INK }}>
+                <span style={{ fontSize: 16 }}>{icon}</span>{label}
               </div>
             ))}
           </div>
+        </div>
+
+        {/* right — auth card */}
+        <div style={{ width: 360, background: "#fff", border: `1px solid ${LINE}`, borderRadius: 18, padding: "32px 28px", animation: "rise .45s ease .05s both", boxShadow: "0 2px 20px rgba(0,0,0,.06)" }}>
+          {/* tab switcher */}
+          <div style={{ display: "flex", borderRadius: 10, background: BONE, padding: 3, marginBottom: 26 }}>
+            {(["signin", "register"] as const).map(t => (
+              <button key={t} className="b" onClick={() => { setTab(t); setFormErr(""); }}
+                style={{ flex: 1, border: "none", borderRadius: 8, padding: "9px 0", fontSize: 13.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", transition: "all .15s",
+                  background: tab === t ? "#fff" : "transparent", color: tab === t ? INK : MUTED,
+                  boxShadow: tab === t ? "0 1px 4px rgba(0,0,0,.08)" : "none" }}>
+                {t === "signin" ? "Sign in" : "Create account"}
+              </button>
+            ))}
+          </div>
+
+          <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {tab === "register" && (
+              <div style={{ display: "flex", gap: 10 }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: MUTED, letterSpacing: "0.04em", display: "block", marginBottom: 5 }}>First name</label>
+                  <input style={inputStyle} value={firstName} onChange={e => setFirstName(e.target.value)} placeholder="Ada" autoComplete="given-name" />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ fontSize: 12, fontWeight: 600, color: MUTED, letterSpacing: "0.04em", display: "block", marginBottom: 5 }}>Last name</label>
+                  <input style={inputStyle} value={lastName} onChange={e => setLastName(e.target.value)} placeholder="Lovelace" autoComplete="family-name" />
+                </div>
+              </div>
+            )}
+            <div>
+              <label style={{ fontSize: 12, fontWeight: 600, color: MUTED, letterSpacing: "0.04em", display: "block", marginBottom: 5 }}>Email</label>
+              <input style={inputStyle} type="email" value={email} onChange={e => setEmail(e.target.value)}
+                placeholder="you@example.com" required autoComplete="email" />
+            </div>
+            <div>
+              <label style={{ fontSize: 12, fontWeight: 600, color: MUTED, letterSpacing: "0.04em", display: "block", marginBottom: 5 }}>Password</label>
+              <div style={{ position: "relative" }}>
+                <input style={{ ...inputStyle, paddingRight: 42 }} type={showPass ? "text" : "password"}
+                  value={password} onChange={e => setPassword(e.target.value)}
+                  placeholder={tab === "register" ? "Min 8 characters" : "Your password"} required
+                  autoComplete={tab === "register" ? "new-password" : "current-password"} />
+                <button type="button" onClick={() => setShowPass(v => !v)}
+                  style={{ position: "absolute", right: 11, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: MUTED, fontSize: 13, padding: 0, lineHeight: 1 }}>
+                  {showPass ? "Hide" : "Show"}
+                </button>
+              </div>
+            </div>
+
+            {formErr && (
+              <div style={{ fontSize: 13, color: ACCENT, background: "#f9e7e1", border: `1px solid ${ACCENT}`, borderRadius: 8, padding: "9px 13px" }}>{formErr}</div>
+            )}
+
+            <button type="submit" disabled={submitting} className="b"
+              style={{ background: submitting ? BONE : HEAL, color: submitting ? MUTED : "#fff", border: "none", borderRadius: 10, padding: "12px", fontSize: 15, fontWeight: 600, cursor: submitting ? "default" : "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 2 }}>
+              {submitting
+                ? <><span style={{ width: 15, height: 15, borderRadius: "50%", border: `2px solid ${MUTED}`, borderTopColor: "transparent", display: "inline-block", animation: "spin .7s linear infinite" }} /> Processing…</>
+                : tab === "signin" ? "Sign in →" : "Create account →"
+              }
+            </button>
+          </form>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "20px 0" }}>
+            <div style={{ flex: 1, height: 1, background: LINE }} />
+            <span style={{ fontSize: 12, color: MUTED }}>or</span>
+            <div style={{ flex: 1, height: 1, background: LINE }} />
+          </div>
+
+          <button className="b" onClick={login}
+            style={{ width: "100%", background: "#fff", color: INK, border: `1.5px solid ${LINE}`, borderRadius: 10, padding: "11px", fontSize: 13.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke={HEAL} strokeWidth="2"/><path d="M8 12h8M12 8l4 4-4 4" stroke={HEAL} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            Continue with Replit
+          </button>
         </div>
       </div>
     </div>
@@ -946,7 +1045,7 @@ function LoginPage({ login }: { login: () => void }) {
 // ── App root (auth gate) ──────────────────────────────────────────────────────
 
 export default function App() {
-  const { user, isLoading, login, logout } = useAuth();
+  const { user, isLoading, login, logout, loginWithPassword, register } = useAuth();
 
   if (isLoading) {
     return (
@@ -957,7 +1056,7 @@ export default function App() {
     );
   }
 
-  if (!user) return <LoginPage login={login} />;
+  if (!user) return <LoginPage login={login} loginWithPassword={loginWithPassword} register={register} />;
 
   return <AppInner user={user} logout={logout} />;
 }
