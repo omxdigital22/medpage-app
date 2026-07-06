@@ -14,31 +14,46 @@ router.post("/quiz", async (req, res) => {
     const lang = (language || "English").trim();
 
     const source = pages.map((p: any) =>
-      `[SOURCE: ${p.sourceName || "Book"} | PAGE ${p.page}]\n${(p.text || "").slice(0, 1000)}`
+      `[SOURCE: ${p.sourceName || "Book"} | PAGE ${p.page}]\n${(p.text || "").slice(0, 2000)}`
     ).join("\n\n");
 
     const excludeBlock = (exclude as string[]).length
-      ? `\nDo NOT repeat these stems:\n${(exclude as string[]).map((q, i) => `${i + 1}. ${q}`).join("\n")}\n`
+      ? `\nDo NOT repeat or rephrase any of these question stems:\n${(exclude as string[]).map((q, i) => `${i + 1}. ${q}`).join("\n")}\n`
       : "";
 
-    const system = `You are MedPager, generating single-best-answer MCQs for Indian MBBS/NEET-PG exam preparation.
+    const system = `You are MedPager, generating high-quality single-best-answer MCQs for MBBS/NEET-PG examination preparation.
 
 RULES:
 1. Use ONLY facts present in the SOURCE TEXT.
-2. Generate 6 new MCQs, different from any excluded stems.
-3. Each MCQ has exactly 4 options. Mark the correct index (0-based).
-4. Include a one-line "why" with the reasoning.
-5. Include "citation_page" (from [PAGE n] in the source).
-6. Write in ${lang} but keep drug names, eponyms, classifications in English.
-7. Return ONLY valid JSON — no markdown, no backticks.${excludeBlock}
+2. Generate exactly 6 new MCQs.
+3. Write CHALLENGING, CLINICAL questions — scenario-based (vignette) where possible, not just fact-recall.
+4. Each MCQ has exactly 4 options — make distractors plausible, not obviously wrong.
+5. Include a thorough "why" explanation (2–4 sentences) — explain why the correct answer is right AND briefly why each distractor is wrong.
+6. Include "citation_page" (page number from SOURCE TEXT).
+7. Vary question types: some scenario-based, some mechanism-based, some "next best step", some "investigation of choice", some "drug of choice".
+8. Write in ${lang} but keep drug names, eponyms, lab values, and medical terms in English.
+9. Return ONLY valid JSON — no markdown, no backticks.${excludeBlock}
 
-JSON shape: { "quiz": [ { "q": "stem", "options": ["a","b","c","d"], "correct": 0, "why": "reason", "citation_page": number | null } ] }`;
+JSON shape:
+{
+  "quiz": [
+    {
+      "q": "clinical scenario or direct question stem (50–120 words)",
+      "options": ["Option A", "Option B", "Option C", "Option D"],
+      "correct": 0,
+      "why": "detailed explanation of the correct answer and why distractors are wrong",
+      "citation_page": number | null
+    }
+  ]
+}`;
 
     const resp = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
       body: JSON.stringify({
-        model, temperature: 0.7,
+        model,
+        temperature: 0.7,
+        max_tokens: 3000,
         response_format: { type: "json_object" },
         messages: [{ role: "system", content: system }, { role: "user", content: `SOURCE TEXT:\n${source}` }],
       }),
