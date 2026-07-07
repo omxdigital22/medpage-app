@@ -559,7 +559,7 @@ function AppInner({ user, logout }: { user: AuthUser; logout: () => void }) {
 
       <Header
         language={language} setLanguage={setLanguage}
-        mode={mode} setMode={m => { setMode(m); setTab(m === "longAnswer" ? "answer" : "mcq"); }}
+        mode={mode} setMode={(m: "longAnswer" | "mcq") => { setMode(m); setTab(m === "longAnswer" ? "answer" : "mcq"); }}
         sourceCount={sources.length}
         user={user} logout={logout}
         showHistory={showHistory} setShowHistory={setShowHistory}
@@ -1197,12 +1197,11 @@ function Spinner({ size = 16 }: { size?: number }) {
 // ── Login Page ───────────────────────────────────────────────────────────────
 
 type LoginPageProps = {
-  login: () => void;
   loginWithPassword: (email: string, password: string) => Promise<{ ok: boolean; error?: string }>;
   register: (email: string, password: string, firstName?: string, lastName?: string) => Promise<{ ok: boolean; error?: string }>;
 };
 
-function LoginPage({ login, loginWithPassword, register }: LoginPageProps) {
+function LoginPage({ loginWithPassword, register }: LoginPageProps) {
   const [tab, setTab] = useState<"signin" | "register">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -1321,18 +1320,6 @@ function LoginPage({ login, loginWithPassword, register }: LoginPageProps) {
               }
             </button>
           </form>
-
-          <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "20px 0" }}>
-            <div style={{ flex: 1, height: 1, background: LINE }} />
-            <span style={{ fontSize: 12, color: MUTED }}>or</span>
-            <div style={{ flex: 1, height: 1, background: LINE }} />
-          </div>
-
-          <button className="b" onClick={login}
-            style={{ width: "100%", background: "#fff", color: INK, border: `1.5px solid ${LINE}`, borderRadius: 10, padding: "11px", fontSize: 13.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke={HEAL} strokeWidth="2"/><path d="M8 12h8M12 8l4 4-4 4" stroke={HEAL} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-            Continue with Replit
-          </button>
         </div>
       </div>
     </div>
@@ -1342,7 +1329,7 @@ function LoginPage({ login, loginWithPassword, register }: LoginPageProps) {
 // ── App root (auth gate) ──────────────────────────────────────────────────────
 
 export default function App() {
-  const { user, isLoading, login, logout, loginWithPassword, register } = useAuth();
+  const { user, isLoading, logout, loginWithPassword, register } = useAuth();
 
   if (isLoading) {
     return (
@@ -1353,7 +1340,7 @@ export default function App() {
     );
   }
 
-  if (!user) return <LoginPage login={login} loginWithPassword={loginWithPassword} register={register} />;
+  if (!user) return <LoginPage loginWithPassword={loginWithPassword} register={register} />;
 
   return <AppInner user={user} logout={logout} />;
 }
