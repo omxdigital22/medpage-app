@@ -2,11 +2,18 @@ import express, { type Express } from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import pinoHttp from "pino-http";
+import path from "node:path";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { authMiddleware } from "./middlewares/authMiddleware";
 import router from "./routes";
 import { logger } from "./lib/logger";
 
 const app: Express = express();
+const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+const frontendDist = path.resolve(moduleDir, "../../medpager/dist/public");
+const frontendIndex = path.join(frontendDist, "index.html");
+const serveFrontend = existsSync(frontendIndex);
 
 // Build an allowlist from the Replit dev/deployment domains
 function buildAllowedOrigins(): string[] {
@@ -15,6 +22,8 @@ function buildAllowedOrigins(): string[] {
   if (devDomain) origins.push(`https://${devDomain}`);
   const deploymentUrl = process.env.REPLIT_DEPLOYMENT_URL;
   if (deploymentUrl) origins.push(deploymentUrl.replace(/\/$/, ""));
+  const publicUrl = process.env.PUBLIC_URL;
+  if (publicUrl) origins.push(publicUrl.replace(/\/$/, ""));
   return origins;
 }
 
@@ -46,5 +55,18 @@ app.use(express.urlencoded({ extended: true }));
 app.use(authMiddleware);
 
 app.use("/api", router);
+
+if (serveFrontend) {
+  app.use(express.static(frontendDist));
+  app.get(/^(?!\/api).*/, (_req, res) => {
+    res.sendFile(frontendIndex);
+  });
+} else {
+  app.get("/", (_req, res) => {
+    const frontend = process.env.FRONTEND_URL?.replace(/\/$/, "")
+      || (process.env.NODE_ENV === "production" ? "https://localhost" : "http://localhost:3000");
+    res.redirect(frontend);
+  });
+}
 
 export default app;
