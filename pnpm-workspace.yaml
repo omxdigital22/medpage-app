@@ -68,11 +68,14 @@ catalog:
 
 autoInstallPeers: false
 
-onlyBuiltDependencies:
-  - '@swc/core'
-  - esbuild
-  - msw
-  - unrs-resolver
+allowBuilds:
+  '@swc/core': true
+  # Postinstall execs bin/esbuild to validate the native binary; shared hosting
+  # (e.g. Hostinger) blocks that with EACCES. Skipping is supported — the JS API
+  # and optional @esbuild/* platform packages still work.
+  esbuild: false
+  msw: true
+  unrs-resolver: true
 
 overrides:
   # replit uses linux-x64 only, we can exclude all other platforms
