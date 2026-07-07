@@ -13,18 +13,31 @@ const router: IRouter = Router();
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
+function getFrontendUrl(): string {
+  const configured = process.env.FRONTEND_URL?.replace(/\/$/, "");
+  if (configured) return configured;
+  return process.env.NODE_ENV === "production" ? "https://localhost" : "http://localhost:3000";
+}
+
 function getOrigin(req: Request): string {
-  const proto = req.headers["x-forwarded-proto"] || "https";
-  const host = req.headers["x-forwarded-host"] || req.headers["host"] || "localhost";
+  const proto =
+    (req.headers["x-forwarded-proto"] as string) ||
+    (process.env.NODE_ENV === "production" ? "https" : "http");
+  const host =
+    (req.headers["x-forwarded-host"] as string) || req.headers.host || "localhost:3000";
   return `${proto}://${host}`;
 }
 
+function cookieSecure(): boolean {
+  return process.env.NODE_ENV === "production";
+}
+
 function setSessionCookie(res: Response, sid: string) {
-  res.cookie(SESSION_COOKIE, sid, { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: SESSION_TTL });
+  res.cookie(SESSION_COOKIE, sid, { httpOnly: true, secure: cookieSecure(), sameSite: "lax", path: "/", maxAge: SESSION_TTL });
 }
 
 function setOidcCookie(res: Response, name: string, value: string) {
-  res.cookie(name, value, { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: OIDC_COOKIE_TTL });
+  res.cookie(name, value, { httpOnly: true, secure: cookieSecure(), sameSite: "lax", path: "/", maxAge: OIDC_COOKIE_TTL });
 }
 
 function getSafeReturnTo(value: unknown): string {
@@ -173,23 +186,24 @@ router.get("/callback", async (req: Request, res: Response) => {
 // ── logout ────────────────────────────────────────────────────────────────────
 
 router.get("/logout", async (req: Request, res: Response) => {
-  const origin = getOrigin(req);
   const sid = getSessionId(req);
-  // check if this is a Replit OIDC session
   const session = sid ? await getSession(sid) : null;
   await clearSession(res, sid);
+  const returnTo = getSafeReturnTo(req.query.returnTo);
+  const frontend = getFrontendUrl();
+  const destination = `${frontend}${returnTo}`;
   if (session?.authProvider === "replit" && session.access_token) {
     try {
       const config = await getOidcConfig();
       const endSessionUrl = oidc.buildEndSessionUrl(config, {
         client_id: process.env.REPL_ID!,
-        post_logout_redirect_uri: origin,
+        post_logout_redirect_uri: frontend,
       });
       res.redirect(endSessionUrl.href);
       return;
     } catch {}
   }
-  res.redirect(origin);
+  res.redirect(destination);
 });
 
 export default router;
