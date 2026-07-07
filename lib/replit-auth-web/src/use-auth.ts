@@ -36,7 +36,9 @@ export function useAuth(): AuthState {
     window.location.href = `/api/login?returnTo=${encodeURIComponent(base)}`;
   }, []);
 
-  const logout = useCallback(() => { window.location.href = "/api/logout"; }, []);
+  const logout = useCallback(() => {
+    window.location.href = `/api/logout?returnTo=${encodeURIComponent("/")}`;
+  }, []);
 
   const loginWithPassword = useCallback(async (email: string, password: string): Promise<{ ok: boolean; error?: string }> => {
     try {
