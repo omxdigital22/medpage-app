@@ -15,6 +15,11 @@ function requireAuth(req: Request, res: Response): boolean {
 
 function uid() { return crypto.randomBytes(12).toString("hex"); }
 
+function routeParam(value: string | string[] | undefined): string {
+  if (Array.isArray(value)) return value[0] ?? "";
+  return value ?? "";
+}
+
 // ── Study Sessions ──────────────────────────────────────────────────────────
 
 router.get("/data/sessions", async (req: Request, res: Response) => {
@@ -51,8 +56,9 @@ router.post("/data/sessions", async (req: Request, res: Response) => {
 
 router.delete("/data/sessions/:id", async (req: Request, res: Response) => {
   if (!requireAuth(req, res)) return;
+  const sessionId = routeParam(req.params.id);
   await db.delete(studySessionsTable).where(
-    and(eq(studySessionsTable.id, req.params.id), eq(studySessionsTable.userId, req.user!.id))
+    and(eq(studySessionsTable.id, sessionId), eq(studySessionsTable.userId, req.user!.id))
   );
   res.json({ ok: true });
 });
@@ -61,12 +67,13 @@ router.delete("/data/sessions/:id", async (req: Request, res: Response) => {
 
 router.post("/data/sessions/:id/sources", async (req: Request, res: Response) => {
   if (!requireAuth(req, res)) return;
+  const sessionId = routeParam(req.params.id);
   const { files } = req.body || {};
   if (!Array.isArray(files)) { res.status(400).json({ ok: false, error: "files array required" }); return; }
   const rows = await db.insert(sourceFilesTable).values(
     files.map((f: any) => ({
       id: uid(),
-      studySessionId: req.params.id,
+      studySessionId: sessionId,
       userId: req.user!.id,
       name: String(f.name).slice(0, 200),
       fileType: String(f.type || "pdf"),
@@ -78,8 +85,9 @@ router.post("/data/sessions/:id/sources", async (req: Request, res: Response) =>
 
 router.get("/data/sessions/:id/sources", async (req: Request, res: Response) => {
   if (!requireAuth(req, res)) return;
+  const sessionId = routeParam(req.params.id);
   const sources = await db.select().from(sourceFilesTable).where(
-    and(eq(sourceFilesTable.studySessionId, req.params.id), eq(sourceFilesTable.userId, req.user!.id))
+    and(eq(sourceFilesTable.studySessionId, sessionId), eq(sourceFilesTable.userId, req.user!.id))
   );
   res.json({ ok: true, sources });
 });
@@ -88,19 +96,21 @@ router.get("/data/sessions/:id/sources", async (req: Request, res: Response) => 
 
 router.get("/data/sessions/:id/messages", async (req: Request, res: Response) => {
   if (!requireAuth(req, res)) return;
+  const sessionId = routeParam(req.params.id);
   const messages = await db.select().from(chatMessagesTable)
-    .where(and(eq(chatMessagesTable.studySessionId, req.params.id), eq(chatMessagesTable.userId, req.user!.id)))
+    .where(and(eq(chatMessagesTable.studySessionId, sessionId), eq(chatMessagesTable.userId, req.user!.id)))
     .orderBy(chatMessagesTable.createdAt);
   res.json({ ok: true, messages });
 });
 
 router.post("/data/sessions/:id/messages", async (req: Request, res: Response) => {
   if (!requireAuth(req, res)) return;
+  const sessionId = routeParam(req.params.id);
   const { role, content, citationPage, citationQuote, sourceName, crossQuestions } = req.body || {};
   if (!role || !content) { res.status(400).json({ ok: false, error: "role and content required" }); return; }
   const [msg] = await db.insert(chatMessagesTable).values({
     id: uid(),
-    studySessionId: req.params.id,
+    studySessionId: sessionId,
     userId: req.user!.id,
     role: String(role),
     content: String(content),
@@ -110,7 +120,7 @@ router.post("/data/sessions/:id/messages", async (req: Request, res: Response) =
     crossQuestions: crossQuestions || null,
   }).returning();
   // bump session updatedAt
-  await db.update(studySessionsTable).set({ updatedAt: new Date() }).where(eq(studySessionsTable.id, req.params.id));
+  await db.update(studySessionsTable).set({ updatedAt: new Date() }).where(eq(studySessionsTable.id, sessionId));
   res.json({ ok: true, message: msg });
 });
 
@@ -118,25 +128,27 @@ router.post("/data/sessions/:id/messages", async (req: Request, res: Response) =
 
 router.get("/data/sessions/:id/answers", async (req: Request, res: Response) => {
   if (!requireAuth(req, res)) return;
+  const sessionId = routeParam(req.params.id);
   const answers = await db.select().from(savedAnswersTable)
-    .where(and(eq(savedAnswersTable.studySessionId, req.params.id), eq(savedAnswersTable.userId, req.user!.id)))
+    .where(and(eq(savedAnswersTable.studySessionId, sessionId), eq(savedAnswersTable.userId, req.user!.id)))
     .orderBy(desc(savedAnswersTable.createdAt));
   res.json({ ok: true, answers });
 });
 
 router.post("/data/sessions/:id/answers", async (req: Request, res: Response) => {
   if (!requireAuth(req, res)) return;
+  const sessionId = routeParam(req.params.id);
   const { topic, sections, citations } = req.body || {};
   if (!topic || !sections) { res.status(400).json({ ok: false, error: "topic and sections required" }); return; }
   const [ans] = await db.insert(savedAnswersTable).values({
     id: uid(),
-    studySessionId: req.params.id,
+    studySessionId: sessionId,
     userId: req.user!.id,
     topic: String(topic).slice(0, 300),
     sections: sections as Record<string,unknown>,
     citations: (citations || []) as unknown[],
   }).returning();
-  await db.update(studySessionsTable).set({ updatedAt: new Date() }).where(eq(studySessionsTable.id, req.params.id));
+  await db.update(studySessionsTable).set({ updatedAt: new Date() }).where(eq(studySessionsTable.id, sessionId));
   res.json({ ok: true, answer: ans });
 });
 
