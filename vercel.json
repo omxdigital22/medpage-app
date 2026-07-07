@@ -1,5 +1,14 @@
 {
+  "installCommand": "pnpm install",
+  "buildCommand": "pnpm run build:web",
+  "outputDirectory": "artifacts/medpager/dist/public",
+  "framework": null,
+  "rewrites": [
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
+  ],
   "functions": {
-    "api/generate.js": { "maxDuration": 60 }
+    "api/generate.js": { "maxDuration": 60 },
+    "api/ask.js": { "maxDuration": 60 },
+    "api/quiz.js": { "maxDuration": 60 }
   }
 }
